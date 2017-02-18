@@ -1,0 +1,236 @@
+/*  University of Florida                                      (All rights Reserved) 
+ *  Department of Chemical Engineering
+ *  Project    : Taylor-Couette Cell 
+ *  Supervisor : Dr. Ranga Narayanan
+ *  Coded by   : Ronald Wilson (Student Assistant) UFID: 48001969
+ *  Code  : Version 1.0
+ *  Built : Version 1.0
+ *  NOTE: Current operations can be viewed through serial out
+ */
+ 
+// Pin Maps
+const int directionControlPin=8;                            // Controls direction of rotation for stepper HIGH->Clockwise LOW->Anti-Clockwise
+const int stepperStepPin=9;                                 // Step pulses makes the motor turn LOW->HIGH transition for step
+const int stopSensePin=7;                                   // HIGH->initializes the stepper to startPoint. LOW->resets stepper motor to zero 
+const int M1pin=10;                                         // Encoder read in for Motor1
+const int M2pin=11;                                         // Encoder read in for Motor2
+#define inputPin A0                                         // RPM input value for Motor2 
+#define encoderM1ReadOutPin A1                              // Encoder read out for Motor1 to DAQ
+#define encoderM2ReadOutPin A2                              // Encoder read out for Motor2 to DAQ  
+  
+
+int count=0;                                                // Keeps track of current position of servo
+int inputRPM=0;                                             // Input RPM for Motor2
+void readFromDAQ(){inputRPM=4*analogRead(inputPin);}        // Read Input RPM from DAQ :every bit from 1024 bits is equal to 4 RPM
+void writeToDAQ(float rpmEncoder1,float rpmEncoder2);       // Writes RPM values to DAQ
+
+void setup() 
+{
+ pinMode(directionControlPin,OUTPUT);
+ pinMode(stepperStepPin,OUTPUT);
+ pinMode(stopSensePin,INPUT);
+ pinMode(M1pin,INPUT);
+ pinMode(M2pin,INPUT);
+ pinMode(inputPin,INPUT);
+ pinMode(encoderM1ReadOutPin,INPUT);
+ pinMode(encoderM2ReadOutPin,INPUT);
+ Serial.begin(9600);
+}
+
+class stepperCustom                     // Only effective for Motor2 (as of Built 1.0)  
+{
+  private:
+  const int startPoint=144;
+  public: 
+  void startupM();                       // Initializes stepper motor to starting position (startPoint)
+  void shutdownM();                      // Resets stepper to zero position
+  void pid(int rpm, double readOut);     // Maintains control using PID w.r.t encoder 
+  void stepForward(int steps);         
+  void stepBackward(int steps);
+};
+
+void stepperCustom::startupM()
+{
+    Serial.println("Motor Starting");
+    digitalWrite(directionControlPin,HIGH);
+    digitalWrite(stepperStepPin,LOW);
+    while(count<=startPoint)
+    {
+      digitalWrite(stepperStepPin,HIGH);
+      delay(5);
+      digitalWrite(stepperStepPin,LOW);
+      delay(5);
+      Serial.println(count);
+      count+=1;
+    }
+    delay(5);
+}
+
+void stepperCustom::shutdownM()
+{
+    Serial.println("Motor Shutdown");
+    digitalWrite(directionControlPin,LOW);
+    digitalWrite(stepperStepPin,LOW);
+    while(count>0)
+    {
+      digitalWrite(stepperStepPin,HIGH);
+      delay(5);
+      digitalWrite(stepperStepPin,LOW);
+      delay(5);
+      Serial.println(count);
+      count-=1;
+    }
+    delay(5);
+    count=0;
+}
+
+void stepperCustom::stepForward(int steps)
+{
+    Serial.println("FWD");
+    digitalWrite(directionControlPin,HIGH);
+    for(int i=0;i<=steps;i++)
+    {
+      digitalWrite(stepperStepPin,LOW);
+      delay(20);
+      digitalWrite(stepperStepPin,HIGH);
+      delay(20);
+      Serial.println(count);
+      count+=1;
+    }
+    delay(20);
+}
+
+void stepperCustom::stepBackward(int steps)
+{
+  Serial.println("BWD");
+  digitalWrite(directionControlPin,LOW);
+  for(int i=0;i<=steps;i++)
+  {
+    digitalWrite(stepperStepPin,LOW);
+    delay(20);
+    digitalWrite(stepperStepPin,HIGH);
+    delay(20);
+    Serial.println(count);
+    count-=1;
+  }
+  delay(20);
+}
+
+void stepperCustom::pid(int rpm, double readOut)
+{
+  float pGain=0,iGain=0,dGain=0;   //Differential gain is not used
+  int error=rpm-(int)readOut;
+  iGain+=error/500;
+  pGain=error/200;
+  int input=pGain+iGain;
+  if(error>0)
+  {
+    stepperCustom::stepForward(input);
+  }
+  else if(error<0)
+  {
+    stepperCustom::stepBackward(input);
+  }
+}
+
+class encoder                           
+{
+  public:
+  long pulse_count;
+  double RPM=0, duration, total_duration;
+  encoder()
+  {
+    this->pulse_count=0;
+    this->duration=0;
+    this->total_duration=0;
+  }
+  double denoiser(double rpm,int motor);                // Clears random noise fluctuations introduced by device. Linear and deterministic in nature
+  void readEncoder(encoder rpmM1, encoder rpmM2);       // Reads current value from both encoders
+};
+
+void encoder::readEncoder(encoder M1, encoder M2)
+{
+   int flag=0;
+  
+  while(flag==0)
+  {
+    if((M1.total_duration>0.0005)|(M2.total_duration>0.0005))
+    {
+      flag=1;
+    }
+    
+    M1.duration = pulseIn(M1pin, HIGH);
+    M2.duration = pulseIn(M2pin, HIGH);
+  
+    if(M1.duration!=0)
+    {
+      M1.total_duration+=(M1.duration*0.000001);
+      M1.pulse_count+=1;
+    }
+    
+    if(M2.duration!=0)
+    {
+      M2.total_duration+=(M2.duration*0.000001);
+      M2.pulse_count+=1;
+    }
+  }
+  
+  M1.RPM=(M1.RPM+((M1.pulse_count/M1.total_duration)))/2;
+  M2.RPM=(M2.RPM+((M2.pulse_count/M2.total_duration)))/2;
+
+  Serial.println("M1 RPM: ");
+  Serial.println(M1.denoiser(M1.RPM,1));
+  Serial.println("M2 RPM: ");
+  Serial.println(M2.denoiser(M2.RPM,2));
+  Serial.println(" ");
+  delay(1);         
+}
+
+double encoder::denoiser(double rpm, int motor)
+{
+  if(motor==1)
+  {
+    double volt=0.009144*rpm+26.08;
+    return 81.7*volt-2078;
+  }
+  if(motor==2)
+  {
+    double volt=0.01177*rpm+36.53;
+    return 101.4*volt-3631;
+  }
+}
+
+void loop()                                                              //main() starts here
+{
+  stepperCustom M3;
+  encoder M1,M2;
+  if((count==0)&&(digitalRead(stopSensePin)==HIGH))
+  {
+    M3.startupM();
+    delay(500);
+  } 
+  if((count>0)&&(digitalRead(stopSensePin)==HIGH))
+  {
+    float checkpoint=inputRPM;
+    while(inputRPM==checkpoint)
+    {
+      M1.readEncoder(M1,M2);
+      writeToDAQ(M1.RPM, M2.RPM);
+      if(inputRPM!=0)
+        M3.pid(inputRPM,M2.RPM);
+      readFromDAQ();
+    }
+  }
+  if((count>0)&&(digitalRead(stopSensePin)==LOW))
+  {
+     M3.shutdownM();
+  }
+}
+
+void writeToDAQ(float rpmEncoder1,float rpmEncoder2)                     // every bit from 1024 bits is equal to 4 RPM 
+{
+  int temp=(int)(rpmEncoder1/4);
+  analogWrite(encoderM1ReadOutPin,temp);
+  temp=(int)(rpmEncoder2/4);
+  analogWrite(encoderM2ReadOutPin,temp);
+}
