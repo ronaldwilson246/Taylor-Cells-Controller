@@ -2,9 +2,9 @@
  *  Department of Chemical Engineering
  *  Project    : Taylor-Couette Cell 
  *  Supervisor : Dr. Ranga Narayanan
- *  Coded by   : Ronald Wilson (Student Assistant) UFID: 48001969
+ *  Coded by   : Ronald Wilson (Student Assistant)
  *  Build : 1.1
- *  NOTE: Current operations can be viewed through serial out
+ *  NOTE: Operations can be viewed through serial out
  */
 
  /* Build 1.1 NOTE: The system has been limited to operate between 0 and 5000 RPM as required by the experiment.
